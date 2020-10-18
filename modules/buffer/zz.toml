@@ -1,0 +1,17 @@
+[project]
+version = "0.1.0"
+name = "buffer"
+cincludes = []
+cobjects = []
+pkgconfig = []
+cflags = []
+lflags = []
+
+[variants]
+default = []
+
+[dependencies]
+mem = "1"
+slice = "1"
+
+[repos]

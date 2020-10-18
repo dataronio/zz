@@ -7,11 +7,14 @@ pkgconfig = []
 cflags = []
 lflags = []
 
-[dependencies]
-string = "1"
-err = "1"
-byteorder = "1"
-io = "1"
+#doesnt exist. use "set LDFLAGS=-lWs2_32" not sure yet how to do this properly
+win32_lflags = ["-lWs2_32"]
 
 [variants]
 default = []
+
+[dependencies]
+byteorder = "1"
+err = "1"
+
+[repos]

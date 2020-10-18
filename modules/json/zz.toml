@@ -8,7 +8,13 @@ cflags = []
 lflags = []
 
 [dependencies]
-err = "1"
+err  = "1"
+pool = "1"
+map  = "1"
+vec  = "1"
+hex  = "1"
+ast  = "1"
+byteorder = "1"
 
 [variants]
 default = []

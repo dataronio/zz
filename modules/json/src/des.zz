@@ -1,0 +1,396 @@
+using err;
+using ast;
+using <stdio.h>::{printf};
+using map;
+using json;
+using pool;
+using slice;
+using byteorder;
+
+export fn impl()
+{
+    new+10000 a = ast::from_macro();
+
+    if a.local.t == ast::DefType::Invalid {
+        err::assert(a.args.count == 1);
+        let arg0 = (ast::Expression*)(a.args.items[0].mem);
+        err::assert_safe(arg0);
+        printf("%.*s_from_json", (int)arg0->v.literal.size , arg0->v.literal.mem);
+        return;
+    }
+
+
+
+
+
+
+
+    // ===================== VEC ==============================
+    static_attest(slice::slice::integrity(&a.local.v.dalias.alias.name));
+    if a.local.t == ast::DefType::Type && a.local.v.dalias.alias.name.eq_cstr("::vec::Vec") {
+
+        printf(r#"pub fn %.*s_from_json(
+    ::vec::Vec  mut new* self,
+    err::Err mut *e,
+    json::Decoder mut *dec,
+    pool::Pool mut*pl,
+    usize tail = 0,
+)
+    where err::checked(*e)
+{
+"#,    a.local.name.size, a.local.name.mem, a.local.name.size, a.local.name.mem);
+
+        printf("    ::vec::make_with_pool(self, pl, tail);\n");
+
+        slice::Slice mut vec_item = {0};
+        for let mut it = a.local.v.dalias.alias.params.iter(); it.next(); {
+            let expr = (ast::Expression*)it.val.mem;
+            err::assert_safe(expr);
+            if expr->t != ast::ExpressionType::Infix {
+                continue;
+            }
+
+            let lhs = expr->v.infix.lhs;
+            err::assert_safe(lhs);
+            if lhs->t != ast::ExpressionType::Call {
+                continue;
+            }
+            let name = lhs->v.call.name;
+            err::assert_safe(name);
+            if name->t != ast::ExpressionType::Name {
+                continue;
+            }
+            static_attest(slice::slice::integrity(&name->v.literal));
+            if !name->v.literal.eq_cstr("::vec::item") {
+                continue;
+            }
+
+            let rhs = expr->v.infix.rhs;
+            err::assert_safe(rhs);
+            if rhs->t != ast::ExpressionType::Name {
+                continue;
+            }
+            vec_item = rhs->v.literal;
+        }
+
+        if vec_item.mem  == 0 {
+            err::panic("derive on vec requires an attached smt expression of vec::item = type");
+        }
+        static_attest(slice::slice::integrity(&vec_item));
+
+        printf("    if dec->item != json::Item::Array { \n");
+        printf("        e->fail(err::InvalidArgument, \"only array can be decoded to %.*s\"); return;\n",
+            a.local.name.size, a.local.name.mem);
+        printf("    }\n");
+
+        printf("    while dec->next(e) {\n");
+
+        printf("        void mut *v = pl->malloc(sizeof(%.*s));\n",
+            (int)vec_item.size, vec_item.mem
+        );
+        printf("        if v == 0 { e->fail(err::OutOfTail, \"oom\"); return; }\n");
+        printf("        static_attest(safe(v));\n");
+        printf("        if !vec::put(self, v) { e->fail(err::OutOfTail, \"oom\"); return; }\n");
+
+
+        if vec_item.eq_cstr("::slice::slice::Slice") {
+            printf("    ::json::des::Slice_from_json(v, e, dec, pl);\n");
+            printf("    if err::check(e) { return; }\n");
+        } else if vec_item.size < 2 || unsafe<char>(vec_item.mem[0]) != ':' {
+            if vec_item.eq_cstr("bool") {
+                printf("        if dec->item == json::Item::True {\n");
+                printf("            *(bool mut*)v = true;\n");
+                printf("        } else if dec->item == json::Item::False {\n");
+                printf("            *(bool mut*)v = false;\n");
+                printf("        } else {\n");
+                printf("            e->fail(err::InvalidArgument, \"only boolean can be decoded to %.*s\"); return;\n",
+                    (int)a.local.name.size, a.local.name.mem
+                );
+                printf("        }\n");
+            } else {
+                printf("        if dec->item == json::Item::Uint {\n");
+                printf("            *(%.*s mut*)v = (%.*s)dec->val.atoi(10)\n",
+                    (int)vec_item.size, vec_item.mem,
+                    (int)vec_item.size, vec_item.mem
+                );
+                printf("        } else {\n");
+                printf("            e->fail(err::InvalidArgument, \"only integer can be decoded to %.*s\"); return;\n",
+                    (int)a.local.name.size, a.local.name.mem
+                );
+                printf("        }\n");
+            }
+        } else {
+            printf("        %.*s_from_json(v, e, dec, pl);\n", (int)vec_item.size, vec_item.mem);
+            printf("        if err::check(e) { return; }\n");
+        }
+
+        printf("    }\n");
+
+    // ===================== MAP ==============================
+    } else if a.local.t == ast::DefType::Type && a.local.v.dalias.alias.name.eq_cstr("::map::Map") {
+
+        printf(r#"pub fn %.*s_from_json(
+    ::map::Map mut new* self,
+    err::Err mut *e,
+    json::Decoder mut *dec,
+    pool::Pool mut*pl,
+    usize tail = 0,
+)
+    where err::checked(*e)
+{
+"#,    a.local.name.size, a.local.name.mem, a.local.name.size, a.local.name.mem);
+
+
+
+        printf("    ::map::make_with_pool(self, pl, tail);\n");
+
+        slice::Slice mut map_key = {0};
+        slice::Slice mut map_val = {0};
+        for let mut it = a.local.v.dalias.alias.params.iter(); it.next(); {
+            let expr = (ast::Expression*)it.val.mem;
+            err::assert_safe(expr);
+            if expr->t != ast::ExpressionType::Infix {
+                continue;
+            }
+
+            let lhs = expr->v.infix.lhs;
+            err::assert_safe(lhs);
+            if lhs->t != ast::ExpressionType::Call {
+                continue;
+            }
+            let name = lhs->v.call.name;
+            err::assert_safe(name);
+            if name->t != ast::ExpressionType::Name {
+                continue;
+            }
+            static_attest(slice::slice::integrity(&name->v.literal));
+            if name->v.literal.eq_cstr("::map::key") {
+                let rhs = expr->v.infix.rhs;
+                err::assert_safe(rhs);
+                if rhs->t != ast::ExpressionType::Name {
+                    continue;
+                }
+                map_key = rhs->v.literal;
+            } else if name->v.literal.eq_cstr("::map::val") {
+                let rhs = expr->v.infix.rhs;
+                err::assert_safe(rhs);
+                if rhs->t != ast::ExpressionType::Name {
+                    continue;
+                }
+                map_val = rhs->v.literal;
+            }
+        }
+
+        static_attest(slice::slice::integrity(&map_key));
+        if map_key.mem  == 0 || !map_key.eq_cstr("char") {
+            err::panic("derive on map requires an attached smt expression of map::key = char ");
+        }
+        if map_val.mem  == 0 {
+            err::panic("derive on map requires an attached smt expression of map::val = type");
+        }
+        static_attest(slice::slice::integrity(&map_val));
+
+        printf("    if dec->item != json::Item::Map { \n");
+        printf("        e->fail(err::InvalidArgument, \"only map can be decoded to %.*s\"); return;\n",
+            a.local.name.size, a.local.name.mem);
+        printf("    }\n");
+
+        printf("    while dec->next(e) {\n");
+
+        printf("        void mut *v = pl->malloc(sizeof(%.*s));\n",
+            (int)map_val.size, map_val.mem
+        );
+        printf("        if v == 0 { e->fail(err::OutOfTail, \"oom\"); return; }\n");
+        printf("        static_attest(safe(v));\n");
+        printf("        if !map::insert_bb(self, dec->key.mem, v, dec->key.size) { e->fail(err::OutOfTail, \"oom\"); return; }\n");
+
+        if map_val.eq_cstr("::slice::slice::Slice") {
+            printf("    ::json::des::Slice_from_json(v, e, dec, pl);\n");
+            printf("    if err::check(e) { return; }\n");
+        } else if map_val.size < 2 || unsafe<char>(map_val.mem[0]) != ':' {
+            if map_val.eq_cstr("bool") {
+                printf("        if dec->item == json::Item::True {\n");
+                printf("            *(bool mut*)v = true;\n");
+                printf("        } else if dec->item == json::Item::False {\n");
+                printf("            *(bool mut*)v = false;\n");
+                printf("        } else {\n");
+                printf("            e->fail(err::InvalidArgument, \"only boolean can be decoded to %.*s\"); return;\n",
+                    (int)a.local.name.size, a.local.name.mem
+                );
+                printf("        }\n");
+            } else {
+                printf("        if dec->item == json::Item::Uint {\n");
+                printf("            *(%.*s mut*)v = (%.*s)dec->val.atoi(10)\n",
+                    (int)map_val.size, map_val.mem,
+                    (int)map_val.size, map_val.mem
+                );
+                printf("        } else {\n");
+                printf("            e->fail(err::InvalidArgument, \"only integer can be decoded to %.*s\"); return;\n",
+                    (int)a.local.name.size, a.local.name.mem
+                );
+                printf("        }\n");
+            }
+        } else {
+            printf("        %.*s_from_json(v, e, dec, pl);\n", (int)map_val.size, map_val.mem);
+            printf("        if err::check(e) { return; }\n");
+        }
+
+        printf("    }\n");
+
+    // ===================== ENUM ==============================
+    } else if a.local.t == ast::DefType::Enum {
+
+        printf(r#"pub fn %.*s_from_json(
+    %.*s mut * self,
+    err::Err mut *e,
+    json::Decoder mut *dec,
+    pool::Pool mut*pl,
+    usize tail = 0,
+)
+    where err::checked(*e)
+{
+"#,    a.local.name.size, a.local.name.mem, a.local.name.size, a.local.name.mem);
+
+        printf("    ::mem::zero(self);\n");
+        printf("    if dec->item != json::Item::String { \n");
+        printf("        e->fail(err::InvalidArgument, \"only string can be decoded to %.*s\"); return;\n",
+            a.local.name.size, a.local.name.mem);
+        printf("    }\n");
+        printf("    static_attest(slice::slice::integrity(&dec->val));\n");
+        printf("    let hashk = ::byteorder::to_le64(::map::hash(dec->val));\n");
+        printf("    if false {}\n");
+        for let mut it = a.local.v.denum.items.iter(); it.next(); {
+            let item = (ast::EnumItem *)it.val.mem;
+            err::assert_safe(item);
+            static_attest(slice::slice::integrity(&item->name));
+
+            let hashk = ::byteorder::to_le64(::map::hash(item->name));
+            printf("    else if hashk == 0x%llx && dec->val.eq_cstr(\"%.*s\") {\n", hashk, (int)item->name.size, item->name.mem);
+            printf("        *self = %.*s::%.*s;\n",
+                (int)a.local.name.size, a.local.name.mem, (int)item->name.size, item->name.mem);
+            printf("    }\n");
+        }
+        printf("    else {dec->skip(e);}\n");
+
+
+
+    // ===================== STRUCT ==============================
+    } else if a.local.t == ast::DefType::Struct {
+
+        printf(r#"pub fn %.*s_from_json(
+    %.*s mut * self,
+    err::Err mut *e,
+    json::Decoder mut *dec,
+    pool::Pool mut*pl,
+    usize tail = 0,
+)
+    where err::checked(*e)
+{
+"#,    a.local.name.size, a.local.name.mem, a.local.name.size, a.local.name.mem);
+
+        printf("    ::mem::zero(self);\n");
+        printf("    while dec->next(e) {\n");
+        printf("        if dec->key.mem == 0 { dec->skip(e); continue; }\n");
+        printf("        let hashk = ::byteorder::to_le64(::map::hash(dec->key));\n");
+        printf("        if false {}\n");
+
+        for let mut it = a.local.v.dstruct.fields.iter(); it.next(); {
+            let field = (ast::Field*)it.val.mem;
+            err::assert_safe(field);
+            static_attest(slice::slice::integrity(&field->name));
+            static_attest(slice::slice::integrity(&field->typed.name));
+
+            let hashk = ::byteorder::to_le64(::map::hash(field->name));
+            printf("        else if hashk == 0x%llx && dec->key.eq_cstr(\"%.*s\") {\n", hashk, (int)field->name.size, field->name.mem);
+
+            if field->typed.ptr.count == 0 {
+                printf("            void  mut * v = &self->%.*s;\n",
+                    (int)field->name.size, field->name.mem);
+            } else if field->typed.ptr.count == 1 {
+                printf("            void  mut * v  = pl->malloc(sizeof(%.*s));\n",
+                        (int)field->typed.name.size, field->typed.name.mem
+                );
+                printf("            if v == 0 { e->fail(err::OutOfTail, \"oom\"); return; }\n");
+                printf("            self->%.*s = v;\n", (int)field->name.size, field->name.mem);
+                printf("            static_attest(safe(v));\n");
+
+            } else {
+                err::panic("json::from can not be used to decode nested pointer %.*s::%.*s",
+                    a.local.name.size, a.local.name.mem, (int)field->name.size, field->name.mem
+                );
+            }
+
+
+            if field->typed.name.eq_cstr("::slice::slice::Slice") {
+                printf("            ::json::des::Slice_from_json(v, e, dec, pl);\n");
+            } else if field->typed.name.size < 2 || unsafe<char>(field->typed.name.mem[0]) != ':' {
+                if field->typed.name.eq_cstr("bool") {
+                    printf("            if dec->item == json::Item::True {\n");
+                    printf("                *(bool mut*)v = true;\n");
+                    printf("            } else if dec->item == json::Item::False {\n");
+                    printf("                *(bool mut*)v = false;\n");
+                    printf("            } else {\n");
+                    printf("                e->fail(err::InvalidArgument, \"only boolean can be decoded to %.*s::%.*s\"); return;\n",
+                        (int)a.local.name.size, a.local.name.mem, (int)field->name.size, field->name.mem
+                    );
+                    printf("            }\n");
+                } else {
+                    printf("            if dec->item == json::Item::Uint {\n");
+                    printf("                *(%.*s mut*)v = (%.*s)dec->val.atoi(10)\n",
+                        (int)field->typed.name.size, field->typed.name.mem,
+                        (int)field->typed.name.size, field->typed.name.mem
+                    );
+                    printf("            } else {\n");
+                    printf("                e->fail(err::InvalidArgument, \"only integer can be decoded to %.*s::%.*s\"); return;\n",
+                        (int)a.local.name.size, a.local.name.mem, (int)field->name.size, field->name.mem
+                    );
+                    printf("            }\n");
+                }
+            } else {
+                printf("            %.*s_from_json(v, e, dec, pl);\n", (int)field->typed.name.size, field->typed.name.mem);
+            }
+            printf("            if err::check(e) { return; }\n");
+
+            printf("        }\n");
+        }
+        printf("        else {dec->skip(e);}\n");
+        printf("    }\n");
+
+    } else {
+        err::panic("json::from can not be used here yet (a.local.t = %d)", a.local.t);
+    }
+
+
+    printf("\n}\n");
+}
+
+
+pub fn Slice_from_json(
+    slice::slice::Slice mut*self,
+    err::Err mut *e,
+    json::Decoder mut *dec,
+    pool::Pool mut*pl,
+)
+    where err::checked(*e)
+{
+    switch dec->item {
+        json::Item::String => {
+            *self = dec->val;
+        }
+        json::Item::DirtyString => {
+            //TODO
+            *self = dec->val;
+        }
+        default => {
+            e->fail(err::InvalidArgument, "can only decode string to slice::slice::Slice");
+            return;
+        }
+    }
+}
+
+pub fn u64_from_json(u64 mut*self, err::Err mut *e, json::Decoder mut *dec, pool::Pool mut*pl)
+    where err::checked(*e)
+{
+    switch dec->item {
+    }
+}

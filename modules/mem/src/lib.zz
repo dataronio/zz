@@ -1,0 +1,36 @@
+inline using "lib.h" as libc;
+
+pub fn copy(void * src, void mut *dst, usize n)
+    where len(dst) >= n
+    where len(src) >= n
+{
+    libc::memcpy(dst, src, n);
+}
+
+pub fn move(void * src, void mut *dst, usize n)
+    where len(dst) >= n
+    where len(src) >= n
+{
+    libc::memmove(dst, src, n);
+}
+
+pub fn set(void mut * dst, u8 c, usize n)
+    where len(dst) >= n
+{
+    libc::memset(dst, c, n);
+}
+
+pub fn eq(void * a, void * b, usize n) -> bool
+    where len(a) >= n
+    where len(b) >= n
+{
+    return libc::memcmp(a,b, n) == 0;
+}
+
+pub fn zero(void mut * dst, usize vt = sizeof(*dst))
+    model *dst == 0
+{
+    libc::memset(dst, 0, vt);
+    static_attest(*dst == 0);
+}
+

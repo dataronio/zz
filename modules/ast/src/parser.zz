@@ -1,0 +1,386 @@
+using err;
+using json;
+using buffer;
+using pool;
+using vec;
+using log;
+using slice;
+
+using ast;
+
+using <string.h>::{memcpy, strncat, strcat};
+
+export symbol ParseError;
+
+pub fn parse_typed(ast::Ast mut* self, ast::Typed mut *typed, err::Err mut *e, json::Decoder mut*dec)
+    where err::checked(*e)
+{
+    while dec->next(e) {
+        if dec->item == json::Item::String && dec->key.eq_cstr("t") {
+            typed->name = dec->val;
+        } else if dec->item == json::Item::Map && dec->key.eq_cstr("t") {
+            while dec->next(e) {
+                if dec->item == json::Item::Array && dec->key.eq_cstr("other") {
+                    while dec->next(e) {
+                        if dec->item == json::Item::String {
+                            let nulen = typed->name.size + dec->val.size  + 3;
+                            char mut * dup = self->pl.malloc(nulen);
+                            if dup == 0 {
+                                return;
+                            }
+                            static_attest(safe(dup));
+                            if typed->name.mem != 0 {
+                                strncat(dup, (char*)typed->name.mem, typed->name.size);
+                                strcat(dup, "::");
+                            }
+                            strncat(dup, (char*)dec->val.mem, dec->val.size);
+
+                            if typed->name.mem!= 0 {
+                                static_attest(pool::member(typed->name.mem, &self->pl));
+                                self->pl.free(typed->name.mem);
+                            }
+                            typed->name.mem  = (u8*)dup;
+                            typed->name.size = nulen;
+                        } else {
+                            dec->skip(e);
+                        }
+                    }
+                    if err::check(e) { return; }
+                } else {
+                    dec->skip(e);
+                }
+            }
+            if err::check(e) { return; }
+        } else if dec->item == json::Item::Array && dec->key.eq_cstr("ptr") {
+            while dec->next(e) {
+                static_attest(vec::integrity(&typed->ptr));
+                typed->ptr.push("TODO");
+                dec->skip(e);
+            }
+        } else if dec->item == json::Item::Array && dec->key.eq_cstr("params") {
+            while dec->next(e) {
+                if dec->item == json::Item::Map {
+                    let m = (ast::Expression mut *)self->pl.malloc(sizeof(ast::Expression));
+                    if m == 0 {
+                        return;
+                    }
+                    static_attest(safe(m));
+                    m->make_expression(&self->pl);
+                    static_attest(vec::integrity(&typed->params));
+                    typed->params.put(m);
+                    parse_expression(self, m, e, dec);
+                } else {
+                    dec->skip(e);
+                }
+            }
+        } else {
+            dec->skip(e);
+        }
+    }
+}
+
+pub fn parse_expression_infix(ast::Ast mut* self, ast::InfixExpression mut *arg, err::Err mut *e, json::Decoder mut*dec)
+    where err::checked(*e)
+{
+    while dec->next(e) {
+        if dec->item == json::Item::Map && dec->key.eq_cstr("rhs") {
+            arg->rhs = (ast::Expression mut *)self->pl.malloc(sizeof(ast::Expression));
+            if arg->rhs == 0 {
+                return;
+            }
+            static_attest(safe(arg->rhs));
+            arg->rhs->make_expression(&self->pl);
+            parse_expression(self, arg->rhs, e, dec);
+            if err::check(e) { return; }
+        } else if dec->item == json::Item::Map && dec->key.eq_cstr("lhs") {
+            arg->lhs = (ast::Expression mut *)self->pl.malloc(sizeof(ast::Expression));
+            if arg->lhs == 0 {
+                return;
+            }
+            static_attest(safe(arg->lhs));
+            arg->lhs->make_expression(&self->pl);
+            parse_expression(self, arg->lhs, e, dec);
+            if err::check(e) { return; }
+
+        } else {
+            dec->skip(e);
+        }
+    }
+
+}
+
+pub fn parse_expression_call(ast::Ast mut* self, ast::CallExpression mut *arg, err::Err mut *e, json::Decoder mut*dec)
+    where err::checked(*e)
+{
+    while dec->next(e) {
+        if dec->item == json::Item::Map && dec->key.eq_cstr("name") {
+            arg->name = (ast::Expression mut *)self->pl.malloc(sizeof(ast::Expression));
+            if arg->name == 0 {
+                return;
+            }
+            static_attest(safe(arg->name));
+            arg->name->make_expression(&self->pl);
+            parse_expression(self, arg->name, e, dec);
+            if err::check(e) { return; }
+        } else {
+            dec->skip(e);
+        }
+    }
+}
+
+pub fn parse_literal(ast::Ast mut* self, slice::slice::Slice mut *name, err::Err mut *e, json::Decoder mut*dec)
+    where err::checked(*e)
+{
+    name->mem  = 0;
+    name->size = 0;
+
+    while dec->next(e) {
+        if dec->item == json::Item::Array && dec->key.eq_cstr("v") {
+            while dec->next(e) {
+                if dec->item == json::Item::Uint {
+                    usize nulen = name->size + 1;
+                    char mut * dup = self->pl.malloc(nulen);
+                    if dup == 0 {
+                        return;
+                    }
+                    if name->size > 0 {
+                        memcpy(dup, name->mem, name->size);
+                    }
+                    dup[name->size] = (char)dec->val.atoi(10);
+                    static_attest(pool::member(name->mem, &self->pl));
+                    self->pl.free(name->mem);
+                    name->mem = (u8*)dup;
+                    name->size = nulen;
+                } else {
+                    dec->skip(e);
+                }
+            }
+            if err::check(e) { return; }
+        } else if dec->item == json::Item::String && dec->key.eq_cstr("v") {
+            *name = dec->val;
+        } else {
+            dec->skip(e);
+        }
+    }
+}
+
+pub fn parse_expression_array_init(ast::Ast mut* self, ast::ArrayInit mut *arg, err::Err mut *e, json::Decoder mut*dec)
+    where err::checked(*e)
+{
+    while dec->next(e) {
+        if dec->item == json::Item::Array && dec->key.eq_cstr("fields") {
+            while dec->next(e) {
+                if dec->item == json::Item::Map {
+                    let m = (ast::Expression mut *)self->pl.malloc(sizeof(ast::Expression));
+                    if m == 0 {
+                        e->fail(err::OutOfTail,"oom");
+                        return;
+                    }
+                    static_attest(safe(m));
+                    m->make_expression(&self->pl);
+                    if !arg->fields.put(m) {
+                        e->fail(err::OutOfTail,"oom");
+                        return;
+                    }
+                    parse_expression(self, m, e , dec);
+                } else {
+                    dec->skip(e);
+                }
+            }
+        } else {
+            dec->skip(e);
+        }
+    }
+}
+
+
+pub fn parse_expression(ast::Ast mut* self, ast::Expression mut *arg, err::Err mut *e, json::Decoder mut*dec)
+    where err::checked(*e)
+{
+    while dec->next(e) {
+        if dec->item == json::Item::Map {
+            if dec->key.eq_cstr("literal") {
+                arg->t = ast::ExpressionType::Literal;
+                parse_literal(self, &arg->v.literal, e, dec);
+            } else if dec->key.eq_cstr("literal_string") {
+                arg->t = ast::ExpressionType::LiteralString;
+                parse_literal(self, &arg->v.literal, e, dec);
+            } else if dec->key.eq_cstr("name") {
+                arg->t = ast::ExpressionType::Name;
+                parse_typed(self, &arg->v.name, e , dec);
+            } else if dec->key.eq_cstr("infix") {
+                arg->t = ast::ExpressionType::Infix;
+                arg->v.infix.make_infix_expression(&self->pl);
+                parse_expression_infix(self, &arg->v.infix, e , dec);
+            } else if dec->key.eq_cstr("call") {
+                arg->t = ast::ExpressionType::Call;
+                arg->v.call.make_call_expression(&self->pl);
+                parse_expression_call(self, &arg->v.call, e , dec);
+            } else if dec->key.eq_cstr("array_init") {
+                arg->t = ast::ExpressionType::ArrayInit;
+                arg->v.array.make_array_init_expression(&self->pl);
+                parse_expression_array_init(self, &arg->v.array, e , dec);
+            } else {
+                err::fail(e, ParseError, "unable to parse expression '%.*s' ", dec->key.size, dec->key.mem);
+                return;
+            }
+        } else {
+            dec->skip(e);
+        }
+    }
+    if err::check(e) { return; }
+}
+
+pub fn decode_struct(ast::Ast mut*self,err::Err mut *e, json::Decoder mut*dec)
+    where err::checked(*e)
+{
+    self->local.t = ast::DefType::Struct;
+    self->local.v.dstruct.make_def_struct(&self->pl);
+
+    while dec->next(e) {
+        if dec->item == json::Item::Array && dec->key.eq_cstr("fields") {
+            while dec->next(e) {
+                if dec->item == json::Item::Map {
+                    let m = (ast::Field mut *)self->pl.malloc(sizeof(ast::Field));
+                    if m == 0 {
+                        return;
+                    }
+                    static_attest(safe(m));
+                    m->make_field(&self->pl);
+                    static_attest(vec::integrity(&self->local.v.dstruct.fields));
+                    self->local.v.dstruct.fields.put(m);
+
+                    while dec->next(e) {
+                        if dec->item == json::Item::Map && dec->key.eq_cstr("typed") {
+                            parse_typed(self, &m->typed, e , dec);
+                        } else if dec->item == json::Item::String && dec->key.eq_cstr("name") {
+                            m->name = dec->val;
+                        } else {
+                            dec->skip(e);
+                        }
+                    }
+                    if err::check(e) { return; }
+                } else {
+                    dec->skip(e);
+                }
+            }
+            if err::check(e) { return; }
+        } else {
+            dec->skip(e);
+        }
+    }
+}
+
+pub fn decode_enum(ast::Ast mut*self,err::Err mut *e, json::Decoder mut*dec)
+    where err::checked(*e)
+{
+    self->local.t = ast::DefType::Enum;
+    self->local.v.dstruct.make_def_struct(&self->pl);
+
+    while dec->next(e) {
+        if dec->item == json::Item::Array && dec->key.eq_cstr("names") {
+            while dec->next(e) {
+                if dec->item == json::Item::Array {
+                    while dec->next(e) {
+                        if dec->item == json::Item::String {
+                            let m = (ast::EnumItem mut *)self->pl.malloc(sizeof(ast::EnumItem));
+                            if m == 0 {
+                                return;
+                            }
+                            static_attest(safe(m));
+                            static_attest(vec::integrity(&self->local.v.denum.items));
+                            m->name = dec->val;
+                            if !self->local.v.denum.items.put(m) {
+                                e->fail(err::OutOfTail,"oom");
+                                return;
+                            }
+                        } else {
+                            dec->skip(e);
+                        }
+                    }
+                } else {
+                    dec->skip(e);
+                }
+            }
+        } else {
+            dec->skip(e);
+        }
+    }
+}
+
+pub fn decode_type(ast::Ast mut*self,err::Err mut *e, json::Decoder mut*dec)
+    where err::checked(*e)
+{
+    self->local.t = ast::DefType::Type;
+    self->local.v.dalias.make_def_alias(&self->pl);
+
+    while dec->next(e) {
+        if dec->item == json::Item::Map && dec->key.eq_cstr("alias") {
+            parse_typed(self, &self->local.v.dalias.alias, e , dec);
+        } else {
+            dec->skip(e);
+        }
+    }
+}
+
+pub fn decode_ast(ast::Ast mut*self,err::Err mut *e, json::Decoder mut*dec)
+    where err::checked(*e)
+{
+    if !dec->next(e) {
+        err::panic("ICE: empty ast?");
+    }
+    if err::check(e) { return; }
+    err::assert2(dec->item == json::Item::Map, "ICE: expected map");
+
+
+    while dec->next(e) {
+        if dec->item == json::Item::Array && dec->key.eq_cstr("args") {
+            while dec->next(e) {
+                if dec->item == json::Item::Map {
+                    let m = (ast::Expression mut *)self->pl.malloc(sizeof(ast::Expression));
+                    if m == 0 {
+                        e->fail(err::OutOfTail,"oom");
+                        return;
+                    }
+                    static_attest(safe(m));
+                    m->make_expression(&self->pl);
+                    if !self->args.put(m) {
+                        e->fail(err::OutOfTail,"oom");
+                        return;
+                    }
+                    parse_expression(self, m, e , dec);
+                } else {
+                    dec->skip(e);
+                }
+
+            }
+            if err::check(e) { return; }
+        } else if dec->item == json::Item::Map && dec->key.eq_cstr("local") {
+            while dec->next(e) {
+                if dec->item == json::Item::Map && dec->key.eq_cstr("def") {
+                    while dec->next(e) {
+                        if dec->item == json::Item::Map {
+                            if dec->key.eq_cstr("struct") {
+                                decode_struct(self, e, dec);
+                            } else if dec->key.eq_cstr("enum") {
+                                decode_enum(self, e, dec);
+                            } else if dec->key.eq_cstr("type") {
+                                decode_type(self, e, dec);
+                            } else {
+                                dec->skip(e);
+                            }
+                        }
+                        if err::check(e) { return; }
+                    }
+                } else if dec->item == json::Item::String && dec->key.eq_cstr("name") {
+                    self->local.name = dec->val;
+                } else {
+                    dec->skip(e);
+                }
+            }
+            if err::check(e) { return; }
+        } else {
+            dec->skip(e);
+        }
+    }
+}

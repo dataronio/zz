@@ -13,3 +13,4 @@ default = []
 [dependencies]
 hex = "1"
 err = "1"
+mem = "1"

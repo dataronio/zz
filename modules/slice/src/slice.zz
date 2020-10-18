@@ -1,36 +1,61 @@
+using byteorder;
 using <string.h> as c_string;
-using mut_slice::{MutSlice};
 
 export struct Slice {
-    usize   size;
     u8 *    mem;
+    usize   size;
 }
 
-export fn borrow(Slice *self) -> Slice *
-    where len(self->mem)    >= self->size
-    model safe(return)
-    model len(return->mem)  >= return->size
-{
-    return self;
-}
+export theory integrity(Slice *self) -> bool
+(
+    safe(self->mem)
+    && len(self->mem) >= self->size
+)
 
-export fn eq(Slice *self, Slice *other) -> bool
+export fn eq(Slice *self, Slice other) -> bool
+    where integrity(self)
+    where integrity(&other)
 {
-    if self->size != other->size {
+    if self->size != other.size {
         return false;
     }
-    return (c_string::memcmp(self->mem, other->mem, self->size) == 0);
+    if self->mem == 0 || other.mem == 0 {
+        return false;
+    }
+    return (c_string::memcmp(self->mem, other.mem, self->size) == 0);
+}
+
+
+export fn strlen(Slice *self) -> usize
+    where integrity(self)
+    model return < len(self->mem)
+{
+    if self->mem == 0 {
+        static_attest(len(self->mem) > 0);
+        return 0;
+    }
+    usize mut l = 0;
+    while unsafe<bool>(self->mem[l] != 0 && l < self->size) {
+        l++;
+    }
+    static_attest(l < len(self->mem));
+    return l;
 }
 
 export fn eq_cstr(Slice *self, char *other) -> bool
+    where integrity(self)
     where nullterm(other)
 {
+    let l1 = strlen(self);
     usize othersize = (usize)c_string::strlen(other);
-    static_attest(len(other) == othersize);
-    return eq_bytes(self, (u8*)other, othersize);
+    if l1 != othersize {
+        return false;
+    }
+    return (c_string::memcmp(self->mem, other, l1) == 0);
 }
 
 export fn eq_bytes(Slice *self, u8 *other, usize othersize) -> bool
+    where integrity(self)
     where len(other) >= othersize
 {
     if self->size != othersize {
@@ -39,15 +64,306 @@ export fn eq_bytes(Slice *self, u8 *other, usize othersize) -> bool
     return (c_string::memcmp(self->mem, other, self->size) == 0);
 }
 
-export fn new(u8 *mem, usize size) -> Slice
+export fn empty(Slice mut new *self)
+    model integrity(self)
+{
+    self->size  =  0;
+    self->mem   =  0;
+    static_attest(integrity(self));
+}
+
+export fn make(Slice mut new *self, u8 *mem, usize size)
     where len(mem) >= size
-    model len(return.mem) == return.size
-    model len(return.mem) == size
+    model len(self->mem) == self->size
+    model len(self->mem) == size
+    model integrity(self)
+{
+    self->size  =  size;
+    self->mem   =  mem;
+    static_attest(len(self->mem) == self->size);
+}
+
+export fn from_cstr(char *cs) Slice
+    where nullterm(cs)
+    model integrity(&return)
 {
     let r = Slice {
-        size:   size,
-        mem:    mem,
+        size : (usize)c_string::strlen(cs),
+        mem  : (u8*)cs,
     };
-    static_attest(len(r.mem) == r.size);
+    static_attest(integrity(&r));
     return r;
+}
+
+/// split this slice by a token
+export fn split(Slice *self, u8 token, usize mut *iterator,  Slice new mut *other) -> bool
+    where   integrity(self)
+    model   integrity(other)
+{
+    usize start = *iterator;
+
+    if *iterator >= self->size {
+        *other = Slice{mem:0, size:0};
+        static_attest(integrity(other));
+        return false;
+    }
+
+    for (; *iterator < self->size ; (*iterator)++) {
+        if (self->mem)[*iterator] == token {
+            break;
+        }
+    }
+
+    usize size = *iterator - start;
+    *iterator += 1;
+
+    if size == 0 {
+        *other = Slice{mem:self->mem + start, size:0};
+        static_attest(integrity(other));
+        return true;
+    }
+
+    *other = sub(self, start, size);
+    return true;
+}
+
+/// retruns a subslice of a slice
+export fn sub(Slice *self, usize from, usize mut size) -> Slice
+    where   integrity(self)
+    model   integrity(&return)
+{
+    if self->size == 0 {
+        return *self;
+    }
+    if from >= self->size {
+        let r = Slice{mem:0, size:0};
+        static_attest(integrity(&r));
+        return r;
+    }
+    if size == 0 {
+        size = self->size;
+    }
+    if from + size >= self->size {
+        size = self->size - from;
+    }
+
+    let r = Slice{
+        mem: self->mem + from,
+        size,
+    };
+
+    //TODO why?
+    static_attest(integrity(&r));
+    return r;
+}
+
+/// read slice as an u8 little endian value
+export fn readu8le(Slice *self, usize offset = 0) -> u8
+    where len(self->mem) >= 0
+    where offset < len(self->mem)
+{
+    let ptr = self->mem + offset;
+    return ptr[0];
+}
+
+/// read slice as an u16 little endian value
+export fn readu16le(Slice *self, usize offset = 0) -> u16
+    where len(self->mem) >= 2
+    where offset <= len(self->mem) - 2
+{
+    let ptr = self->mem + offset;
+    return as<u16>(ptr[0]) | as<u16>(ptr[1]) << 8;
+}
+
+/// read slice as an u32 little endian value
+export fn readu32le(Slice *self, usize offset = 0) -> u32
+    where len(self->mem) >= 4
+    where offset <= len(self->mem) - 4
+{
+    let ptr = self->mem + offset;
+    return (
+        as<u32>(ptr[0])       |
+        as<u32>(ptr[1]) << 8  |
+        as<u32>(ptr[2]) << 16 |
+        as<u32>(ptr[3]) << 24
+    );
+}
+
+/// read slice as an u64 little endian value
+export fn readu64le(Slice *self, usize offset = 0) -> u64
+    where len(self->mem) >= 8
+    where offset <= len(self->mem) - 8
+{
+    let ptr = self->mem + offset;
+    return (
+        as<u64>(ptr[0])       |
+        as<u64>(ptr[1]) << 8  |
+        as<u64>(ptr[2]) << 16 |
+        as<u64>(ptr[4]) << 32 |
+        as<u64>(ptr[5]) << 40 |
+        as<u64>(ptr[3]) << 24 |
+        as<u64>(ptr[6]) << 48 |
+        as<u64>(ptr[7]) << 56
+    );
+}
+
+/// read slice as an u8 big endian value
+export fn readu8be(Slice *self, usize offset = 0) -> u8
+    where len(self->mem) >= 0
+    where offset < len(self->mem)
+{
+    let ptr = self->mem + offset;
+    return ptr[0];
+}
+
+/// read slice as an u16 big endian value
+export fn readu16be(Slice *self, usize offset = 0) -> u16
+    where len(self->mem) >= 2
+    where offset <= len(self->mem) - 2
+{
+    let ptr = self->mem + offset;
+    return as<u16>(ptr[0]) << 8 | as<u16>(ptr[1]);
+}
+
+/// read slice as an u32 big endian value
+export fn readu32be(Slice *self, usize offset = 0) -> u32
+    where len(self->mem) >= 4
+    where offset <= len(self->mem) - 4
+{
+    let ptr = self->mem + offset;
+    return (
+        as<u32>(ptr[0]) << 24 |
+        as<u32>(ptr[1]) << 16 |
+        as<u32>(ptr[2]) << 8  |
+        as<u32>(ptr[3])
+    );
+}
+
+/// read slice as an u64 big endian value
+export fn readu64be(Slice *self, usize offset = 0) -> u64
+    where len(self->mem) >= 8
+    where offset <= len(self->mem) - 8
+{
+    let ptr = self->mem + offset;
+    return (
+        as<u64>(ptr[0]) << 56 |
+        as<u64>(ptr[1]) << 48 |
+        as<u64>(ptr[2]) << 40 |
+        as<u64>(ptr[3]) << 32 |
+        as<u64>(ptr[4]) << 24 |
+        as<u64>(ptr[5]) << 16 |
+        as<u64>(ptr[6]) << 8  |
+        as<u64>(ptr[7])
+    );
+}
+
+/// read slice as an i8 little endian value
+export fn readi8le(Slice *self, usize offset = 0) -> i8
+    where len(self->mem) >= 0
+    where offset < len(self->mem)
+{
+    return as<i8>self->readu8le(offset);
+}
+
+/// read slice as an i16 little endian value
+export fn readi16le(Slice *self, usize offset = 0) -> i16
+    where len(self->mem) >= 2
+    where offset <= len(self->mem) - 2
+{
+    return as<i16>self->readu16le(offset);
+}
+
+/// read slice as an i32 little endian value
+export fn readi32le(Slice *self, usize offset = 0) -> i32
+    where len(self->mem) >= 4
+    where offset <= len(self->mem) - 4
+{
+    return as<i32>(self->readu32le(offset));
+}
+
+/// read slice as an i64 little endian value
+export fn readi64le(Slice *self, usize offset = 0) -> i64
+    where len(self->mem) >= 8
+    where offset <= len(self->mem) - 8
+{
+    return as<i64>(self->readu64le(offset));
+}
+
+/// read slice as an i8 big endian value
+export fn readi8be(Slice *self, usize offset = 0) -> i8
+    where len(self->mem) >= 0
+    where offset < len(self->mem)
+{
+    return as<i8>self->readu8le(offset);
+}
+
+/// read slice as an i16 big endian value
+export fn readi16be(Slice *self, usize offset = 0) -> i16
+    where len(self->mem) >= 2
+    where offset <= len(self->mem) - 2
+{
+    let ptr = self->mem + offset;
+    u16 val = as<u16>(ptr[0] * 256 + ptr[1]);
+    return as<i16>(val);
+}
+
+/// read slice as an i32 big endian value
+export fn readi32be(Slice *self, usize offset = 0) -> i32
+    where len(self->mem) >= 4
+    where offset <= len(self->mem) - 4
+{
+    return as<i32>(self->readu32be(offset));
+}
+
+/// read slice as an i64 big endian value
+export fn readi64be(Slice *self, usize offset = 0) -> i64
+    where len(self->mem) >= 8
+    where offset <= len(self->mem) - 8
+{
+    return as<i64>(self->readu64be(offset));
+}
+
+fn isspace(char c) -> bool {
+    return c == ' ' || c == '\t' || c == '\n' || c == '\v' || c == '\f' || c == '\r';
+}
+fn isdigit(char c) -> bool {
+    return c >= 48 && c <= 57;
+}
+
+/// parse slice as a number string
+///
+export fn atoi(Slice *self, usize base) -> i64
+    where integrity(self)
+    where base == 10
+{
+    bool mut neg = false;
+    i64 mut num = 0;
+    usize mut i = 0;
+    for (; i < self->size; i++) {
+        if isspace((char)self->mem[i]) {
+            continue;
+        } else {
+            if (char)self->mem[i] == '-' {
+                neg = true;
+                i++;
+            }
+            for (; i < self->size; i++) {
+                if !isdigit((char)self->mem[i]) {
+                    if neg {
+                        return num;
+                    } else {
+                        return 0-num;
+                    }
+                }
+
+                /* Compute n as a negative number to avoid overflow on INT_MIN */
+                num = 10 * num - (i64)((char)self->mem[i] - '0');
+            }
+        }
+    }
+    if neg {
+        return num;
+    } else {
+        return 0-num;
+    }
 }

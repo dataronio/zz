@@ -1,0 +1,91 @@
+using <stdio.h>::{printf};
+using <stdlib.h>::{atoi};
+using err;
+using ast;
+using slice;
+using bam;
+
+/// creates literal string with arg0 repeated arg1 times
+export macro repeat()  {
+    new+1000 a = ast::from_macro();
+
+    err::assert(a.args.count == 2);
+
+    let arg0 = (ast::Expression*)(a.args.items[0].mem);
+    let arg1 = (ast::Expression*)(a.args.items[1].mem);
+    err::assert_safe(arg0);
+    err::assert_safe(arg1);
+
+    err::assert2(arg0->t == ast::ExpressionType::LiteralString, "expected arg0: string");
+    err::assert2(arg1->t == ast::ExpressionType::Literal,       "expected arg1: number");
+    static_attest(slice::slice::integrity(&arg1->v.literal));
+    let num = arg1->v.literal.atoi(10);
+
+    printf("\"");
+    for (i64 mut i = 0; i < num; i++) {
+        printf("%.*s", arg0->v.literal.size, arg0->v.literal.mem);
+    }
+    printf("\"");
+}
+
+
+/// tests if call in statement context will correctly expand to multiple statements
+///
+/// TODO: statementm macros are still weird, because the first pass will yield nothing
+///       resulting in var declarations not being available in the first pass
+///       the workaround for users is to have macros in separate modules.
+
+export macro make_int() {
+    printf("int mut a = 0;\n");
+    printf("return a;\n");
+}
+
+export macro increment() {
+    new+1000 a = ast::from_macro();
+    err::assert(a.args.count == 1);
+    let arg0 = (ast::Expression*)(a.args.items[0].mem);
+    err::assert_safe(arg0);
+
+    if arg0->t == ast::ExpressionType::Name {
+        printf("%.*s = %.*s + 1;\n",
+            arg0->v.literal.size, arg0->v.literal.mem,
+            arg0->v.literal.size, arg0->v.literal.mem);
+    }
+}
+
+export macro add() {
+    new+2000 a = ast::from_macro();
+    err::assert(a.args.count == 3);
+
+    let arg0 = (ast::Expression*)(a.args.items[0].mem);
+    let arg1 = (ast::Expression*)(a.args.items[1].mem);
+    let arg2 = (ast::Expression*)(a.args.items[2].mem);
+    err::assert_safe(arg0);
+    err::assert_safe(arg1);
+    err::assert_safe(arg2);
+
+    if arg0->t == ast::ExpressionType::Name {
+        printf("%.*s = %.*s + %.*s;\n",
+            arg0->v.literal.size, arg0->v.literal.mem,
+            arg1->v.literal.size, arg1->v.literal.mem,
+            arg2->v.literal.size, arg2->v.literal.mem);
+    }
+}
+
+export fn main() -> int {
+
+    @bam::happyness();
+
+    int mut foo = 0;
+    @increment(foo);
+    if 1 != foo {
+        return 1;
+    }
+    @add(foo, 1, 2);
+    if 3 != foo {
+        return 1;
+    }
+
+    printf("hello %s\n", @repeat("world ", 32));
+    @make_int("a", 1);
+}

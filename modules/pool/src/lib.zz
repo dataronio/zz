@@ -1,8 +1,8 @@
-using <string.h>::{memset};
-using <assert.h>::{assert};
+using <string.h>::{memset, memmove};
 using <stdio.h>::{stderr, printf};
 using hex;
 using err;
+using mem;
 using <stdint.h>::{uintptr_t};
 
 inline using "asan.h"::{
@@ -10,45 +10,77 @@ inline using "asan.h"::{
     ASAN_UNPOISON_MEMORY_REGION
 }
 
-
-
 const usize ALIGN = (usize)sizeof(uintptr_t);
 
+/// memory m was allocated from pool p
 pub theory member(void * m, Pool*p) -> bool;
 
+/// all allocations from pool p are exacly blocksize long,
+/// the pool has no multi-block allocations and can be used with each() 
+pub theory continuous(Pool p) -> bool;
+
 export struct Pool+ {
-    u8      blocksize;
+
+    usize   blocksize;
     usize   poolsize;
 
     u8 mut* used;
     u8 mut* pool;
 
+    Pool mut * mut extra;
 
-    u8  mem[];
+    u8  pmem[];
 }
 
-export fn new(Pool+pt mut *self, u8 mut blocksize)
-    where pt > pt/(usize)blocksize
+/// creates a new pool with blocksize
+///
+/// new+1000 mypool = pool::make(10);
+/// mypool.alloc(); // get a single block of 10 bytes
+/// mypool.malloc(22); // get a continuous memory span of 22 bytes (less efficient)
+///
+export fn make(Pool mut new*self, usize mut blocksize, usize pt = static(len(self->pmem)))
+    model continuous(*self)
 {
-    assert((usize)blocksize % ALIGN == 0);
+    mem::zero(self);
+
+    if pt == 0 {
+        self->blocksize = -1;
+        static_attest(continuous(*self));
+        return;
+    }
+
+
+
+    // 8 byte redzone
+    blocksize += 8;
+    // 8 byte align
+    if blocksize % ALIGN > 0 {
+        blocksize += (ALIGN - (blocksize % ALIGN));
+    }
+
+    err::assert(pt > pt/(usize)blocksize);
+    err::assert((usize)blocksize % ALIGN == 0);
 
     self->blocksize = blocksize;
     usize mut usedmemlen = pt / (usize)blocksize / 8;
     unsafe { usedmemlen += (ALIGN - (usedmemlen % ALIGN)); }
 
-    self->used  = self->mem;
-    self->pool  = self->mem + usedmemlen;
+    self->used  = self->pmem;
+    self->pool  = self->pmem + usedmemlen;
 
-    assert((usize)self->used % ALIGN == 0);
-    assert((usize)self->pool % ALIGN == 0);
+    err::assert((usize)self->used % ALIGN == 0);
+    err::assert((usize)self->pool % ALIGN == 0);
 
     self->poolsize = pt - usedmemlen;
 
     memset(self->used, 0, usedmemlen);
 
     ASAN_POISON_MEMORY_REGION(self->pool, self->poolsize);
+
+    static_attest(continuous(*self));
 }
 
+/// get the number of bytes left in the pool
 export fn free_bytes(Pool *self) -> usize
 {
     static_attest(safe(self->used));
@@ -56,6 +88,21 @@ export fn free_bytes(Pool *self) -> usize
 
     usize mut c = 0;
     for (usize mut i = 0 ; i < self->poolsize/(usize)self->blocksize; i++) {
+
+        static_attest(i/8 < len(self->used));
+        if self->used[i/8] == 0xff {
+            i += 7;
+            continue;
+        }
+
+        static_attest(i/8 < len(self->used));
+        if self->used[i/8] == 0x00 {
+            c += 8 * (usize)self->blocksize;
+            i += 7;
+            continue;
+        }
+
+        static_attest(i/8 < len(self->used));
         if !bitarray_test(self->used, i) {
             c += (usize)self->blocksize;
         }
@@ -63,20 +110,55 @@ export fn free_bytes(Pool *self) -> usize
     return c;
 }
 
-export fn alloc(Pool mut *self, usize mut size) -> void mut*
+/// alloc a zeroed block
+/// returns null if the pool is full
+export fn alloc(Pool mut *self) -> void mut*
+    where continuous(*self)
+    model member(return, self)
+    model continuous(*self)
+{
+    let r = self->malloc(self->blocksize - 8);
+
+    static_attest(continuous(*self));
+
+    return r;
+}
+
+/// copy a sized object using memory from this pool
+/// returns null if the pool is full
+/// this is alot less efficient than alloc()
+/// as alignment requirements can lead to more blocks being allocated than you expect
+///
+export fn copy(Pool mut *self, void+vt *obj) -> void mut*
+    model member(return, self)
+{
+    void mut * m = self->malloc(vt);
+    if m == 0 {
+        return 0;
+    }
+
+    memmove(m, obj, vt);
+    return m;
+}
+
+
+/// malloc a zeroed continuous memory block of any size
+/// returns null if the pool is full
+/// this is alot less efficient than alloc()
+/// as alignment requirements can lead to more blocks being allocated than you expect
+///
+export fn malloc(Pool mut *self, usize want) -> void mut*
     model member(return, self)
 {
     static_attest(member(0, self));
 
-    // 8 byte redzone
-    size += 8;
-    // 8 byte align
-    size += (ALIGN - (size % ALIGN));
-
+    usize mut size = align(want);
     usize mut blocks = size/(usize)self->blocksize;
+
     if size % (usize)self->blocksize != 0 {
         blocks += 1;
     }
+
     if blocks > 256 {
         return 0;
     }
@@ -111,21 +193,19 @@ export fn alloc(Pool mut *self, usize mut size) -> void mut*
         }
 
         if allfree {
-            u8 mut * mut mem = 0;
+            u8 mut * mut pmem = 0;
             unsafe {
-                mem = self->pool + ((usize)self->blocksize * i);
-                ASAN_UNPOISON_MEMORY_REGION(mem, size);
-                memset(mem, 0, size);
-                mem[0] = 0x60;
-                mem[1] = 0x61;
-                mem[2] = 0x62;
-                mem[3] = 0x63;
-                mem[4] = blocks;
-                mem[5] = 0x65;
-                mem[6] = 0x66;
-                mem[7] = 0x67;
-                ASAN_POISON_MEMORY_REGION(mem, 8);
-                mem = mem + 8;
+                pmem = self->pool + ((usize)self->blocksize * i);
+                ASAN_UNPOISON_MEMORY_REGION(pmem, size);
+                memset(pmem, 0, size);
+                pmem[0] = 0x60;
+                pmem[1] = 0x61;
+                pmem[2] = 0x00;
+                pmem[3] = blocks;
+                ASAN_POISON_MEMORY_REGION(pmem, ALIGN);
+            }
+            unsafe {
+                pmem = pmem + ALIGN;
             }
 
             for (usize mut j = 0; j < blocks; j++) {
@@ -133,49 +213,99 @@ export fn alloc(Pool mut *self, usize mut size) -> void mut*
                 bitarray_set(self->used, i+j);
             }
 
-            assert((usize)mem % ALIGN == 0);
-            return mem;
+            err::assert((usize)pmem % ALIGN == 0);
+            return pmem;
         }
     }
+
+    if self->extra != 0 {
+        static_attest(safe(self->extra));
+        u8 mut * pmem = self->extra->malloc(want);
+        if pmem == 0 {
+            return 0;
+        }
+
+        unsafe {
+            u8 mut * hm = pmem - ALIGN;
+            ASAN_UNPOISON_MEMORY_REGION(hm, ALIGN);
+            hm[2] += 1;
+            ASAN_POISON_MEMORY_REGION(hm, ALIGN);
+        }
+        static_attest(member(pmem, self));
+
+        return pmem;
+    }
+
     return 0;
 }
 
+/// free a pointer previously allocated from this pool
+/// requires pointer to be a member()
 export fn free(Pool mut *self, void * unsafe mut ptr_)
+    model continuous(*self)
     where member(ptr_, self)
 {
     let mut ptr = (u8 mut*)ptr_;
 
     if ptr == 0 {
+        static_attest(continuous(*self));
         return;
     }
 
-    u8 mut blocks;
+    usize mut blocks;
     usize mut startblock;
     unsafe {
-        ptr = ptr - 8;
-        ASAN_UNPOISON_MEMORY_REGION(ptr, 8);
-        blocks = ptr[4];
+        ptr = ptr - ALIGN;
+        ASAN_UNPOISON_MEMORY_REGION(ptr, ALIGN);
+        blocks = ptr[3];
     }
     static_attest(len(ptr) >= 8);
 
-    if ptr[0] != 0x60 || ptr[1] != 0x61 || ptr[2] != 0x62 || ptr[3] != 0x63 || ptr[7] != 0x67 {
-        unsafe { hex::fdump(stderr, ptr, 8); }
+    if ptr[2] != 0 {
+        ptr[2] -= 1;
+        if self->extra == 0 {
+            err::panic("deep address passed to pool with no extra");
+            return;
+        }
+        static_attest(safe(self->extra));
+        static_attest(member(ptr_, self->extra));
+        self->extra->free(ptr_);
+        return;
+    }
+
+    if ptr[0] != 0x60 || ptr[1] != 0x61 || ptr[2] != 0x00  {
+        unsafe { hex::fdump(stderr, ptr, ALIGN); }
         err::panic("invalid address passed to free");
     }
 
+
     ASAN_POISON_MEMORY_REGION(ptr, blocks * self->blocksize);
 
+    err::assert((usize)blocks < self->poolsize/(usize)self->blocksize);
     unsafe {
-        assert((usize)blocks < self->poolsize/(usize)self->blocksize);
         startblock = ((u8*)ptr - self->pool) / (usize)self->blocksize;
-        assert(startblock < self->poolsize/(usize)self->blocksize);
     }
+    err::assert(startblock < self->poolsize/(usize)self->blocksize);
 
     for (usize mut i = startblock; i < startblock + (usize)blocks ; i++) {
         static_attest(safe(self->used));
         static_attest(i/8 < len(self->used));
         bitarray_clear(self->used, i);
     }
+    static_attest(continuous(*self));
+}
+
+export fn align(usize want) -> usize {
+    usize mut size = want;
+
+    // redzone
+    size += ALIGN;
+    // 8 byte align
+    if size % ALIGN > 0 {
+        size += (ALIGN - (size % ALIGN));
+    }
+
+    return size;
 }
 
 fn bitarray_set(u8 mut* a, usize index)

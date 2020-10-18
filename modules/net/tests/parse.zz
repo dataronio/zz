@@ -1,6 +1,6 @@
 using <stdio.h>::{printf, stdin};
 using net::address;
-using string;
+using buffer;
 using err;
 
 
@@ -120,18 +120,18 @@ test {
     stdout = "100::100"
 }
 export fn main() -> int {
-    string::String+1000 mut sin = {0};
-    string::fgets(&sin, stdin);
+    new+100 sin = buffer::make();
+    buffer::fgets(&sin, stdin);
 
-    address::Address mut sa = address::from_string(&sin);
+    new sa = address::from_buffer(&sin);
     if !sa.valid() {
         return 3;
     }
 
-    string::String+100 mut sout = {0};
-    sa.to_string(&sout);
+    new+100 sout = buffer::make();
+    sa.to_buffer(&sout);
 
-    printf("%.*s", (int)sout.len, sout.mem);
+    printf("%.*s", (int)sout.at, sout.mem);
 
     return 0;
 }

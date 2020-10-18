@@ -1,48 +1,51 @@
-![logo](logo.png?raw=true)
+![logo](logo2.png?raw=true)
 
-Drunk Octopus - It compiles, ship it
-====================================
 
-ZZ (drunk octopus) is a modern formally provable dialect of C, inspired by rust
+ZetZ is for systems without dynamic memory, where C is and will remain the defacto standard system interface.<br>
+Target bare metal MCUs, embedded linux, WASM, and embed it in other languages.<br>
 
-Its main use case is code close to hardware, where we still program C out of desperation, because nothing else actually works.
-You can also use it to build cross platform libraries, with a clean portable C-standard api.
+You can also use it to build cross platform libraries, with a clean portable C-standard api. <br>
+Zetz plays nice with others and does not require rewriting everything in zetz to be useful in large projects.
 
-A major innovative feature is that all code is formally proven by symbolic execution in a virtual machine, at compile time.
-
-[![Build Status](https://travis-ci.org/aep/zz.svg?branch=master)](https://travis-ci.org/aep/zz)
+A major innovative feature is that all code is formally verified by symbolic execution in a virtual machine,
+at compile time.
 
 ### quick quick start
 
-1. [install rust](https://www.rust-lang.org/tools/install) for bootstrapping
-1. install an SMT solver, either [yices2](https://github.com/SRI-CSL/yices2) or [z3](https://github.com/Z3Prover/z3)
-2. cd examples/hello
-3. cargo run run
+Get the latest binary from http://bin.zetz.it
+
+
+## editor support
+
+- Emacs: [zetz-mode](https://github.com/damon-kwok/zetz-mode)
+- Vim: [zz.vim](https://github.com/zetzit/zz/tree/master/zz.vim)
 
 
 ### how it looks
 
-ZZ has strong rust aesthetics, but remains a C dialect at the core.
+ZZ has some go and rust aesthetics, but remains a C dialect at the core.
 
 
 ```C++
 using <stdio.h>::{printf}
 
-export fn main() -> int {
-    let r = Random{
-        num: 42,
-    };
-    printf("your lucky number: %u\n", r.gen());
-    return 0;
-}
-
 struct Random {
     u32 num;
 }
 
-fn gen(Random *self) -> u32 {
+fn rng(Random *self) u32 {
     return self->num;
 }
+
+export fn main() int {
+    let r = Random{
+        num: 42,
+    };
+    
+    printf("your lucky number: %u\n", r.rng());
+    return 0;
+}
+
 
 ```
 
@@ -53,7 +56,7 @@ fn gen(Random *self) -> u32 {
 ZZ emits plain C and it will always do that. It is one of the main reasons it exists.
 It will always emit C into a C compiler which will then emit the binary.
 
-most modern languages have has their own ABI, deviating from C, so you have to use glue tools to play nice with others.
+most modern languages have their own ABI, deviating from C, so you have to use glue tools to play nice with others.
 with ZZ being emitted as C, all you do is include the header.
 
 There is no stack unwinding (C++, rust), and no coroutines (go), so all code emits to plain ansi C
@@ -61,6 +64,8 @@ with no requirements towards compiler features.
 
 ZZ works nicely with vendor provided closed source compiler for obscure systems.
 Like arduino, esp32, propriatary firmware compilers, and integrates nicely into existing industry standard microkernels like zephyr, freertos, etc.
+
+
 
 #### safety and correctness with symbolic execution
 
@@ -83,43 +88,6 @@ so my::lib::hello becomes my_lib_hello, which is C convention.
 
 ### language reference
 
-#### top level declarations: fn, struct
-
-fn declares a function.
-struct declares a struct.
-nothing fancy here.
-
-#### storage: const, static, atomic and thread_local
-
-const and static work exactly like in rust, but with C syntax.
-
-```C
-export const uint32_t foo = 3;
-static mutable float blarg = 2.0/0.3;
-thread_local mutable bool bob = true;
-atomic mutable int marvin = 0;
-```
-
-const is inlined in each module and therefore points to different memory in each module.
-static has a global storage location, but is private to the current module.
-
-in effect, there is no way to have declare a shared global writable variable.
-ZZ has no borrowchecker, and the restriction has nothing to do with preventing multithread races.
-Instead the declarations are selected so that the resulting exported binary interface can be mapped to any other language.
-
-if you need to export a global writeable memory location (which is still a bad idea, because threads),
-you can define a function that returns a pointer to the local static.
-
-thread_local and atomic are mapped directly to the C11 keywords.
-ZZ can use nicer keywords because there are no user defined names at the top level.
-
-#### visibility: pub, export
-
-by default all declarations are private to a module
-
-"export" can be used to make sure the declaration ends in the final result. that is in the binary and the export header.
-
-"pub" marks a declaration as local to the project. it is usable in other zz modules, but not exported into the resulting binary
 
 
 #### mutability: const, mut
@@ -135,7 +103,7 @@ ZZ follows the C model of polymorphism: any struct can be cast to the same type 
 In ZZ the cast is implicit because it is always safe.
 
 
-```
+```C++
 struct Vehicle {
     int wheels;
 }
@@ -144,7 +112,7 @@ struct Car {
     Vehicle base;
 }
 
-fn allowed_entry(Vehicle *self) -> bool {
+fn allowed_entry(Vehicle *self) bool {
     return self->wheels <= 2;
 }
 
@@ -157,6 +125,9 @@ fn main() {
     };
     assert(!c.allowed_entry());
 }
+
+
+
 
 
 ```
@@ -209,7 +180,7 @@ thanks to the underlying SMT solver, the ZZ symbolic executor will know that `a[
 The where keyword requires behaviour in the callsite, and the model keyword declares how the function itself will behave.
 
 ```C
-fn bla(int a) -> int
+fn bla(int a) int
     model return == 2 * a
 {
     return a * a;
@@ -229,7 +200,7 @@ type at a given time in the program without ANY runtime code.
 
 ```C++
 
-thery is_open(int*) -> bool;
+theory is_open(int*) bool;
 
 fn open(int mut* a)
     model is_open(a)
@@ -256,7 +227,37 @@ any other combination will lead to a compile error, such as read before open.
 
 
 
+#### storage: const, static, atomic and thread_local
 
+const and static work exactly like in rust, but with C syntax.
+
+```C
+export const uint32_t foo = 3;
+static mutable float blarg = 2.0/0.3;
+thread_local mutable bool bob = true;
+atomic mutable int marvin = 0;
+```
+
+const is inlined in each module and therefore points to different memory in each module.
+static has a global storage location, but is private to the current module.
+
+in effect, there is no way to declare a shared global writable variable.
+ZZ has no borrowchecker, and the restriction has nothing to do with preventing multithread races.
+Instead the declarations are selected so that the resulting exported binary interface can be mapped to any other language.
+
+if you need to export a global writeable memory location (which is still a bad idea, because threads),
+you can define a function that returns a pointer to the local static.
+
+thread_local and atomic are mapped directly to the C11 keywords.
+ZZ can use nicer keywords because there are no user defined names at the top level.
+
+#### visibility: pub, export
+
+by default all declarations are private to a module
+
+"export" can be used to make sure the declaration ends in the final result. that is in the binary and the export header.
+
+"pub" marks a declaration as local to the project. it is usable in other zz modules, but not exported into the resulting binary
 #### struct initialization
 
 To prepare for type elision, all expressions have to have a known type.
@@ -276,7 +277,7 @@ fn main() {
 
 #### conditional compilation / preprocessor
 
-Like in rust, the prepro is not a string processor, but rather executed on the AST  **after** parsing.
+Like in rust, the prepro is not a string processor, but rather executed on the AST **after** parsing.
 This makes it behave very different than C, even if the syntax is the same as C.
 
 The right hand side of #if is evaluated immediately and can only access preprocessor scope.
@@ -331,16 +332,15 @@ unless you want to apply mutability to the local storage named foo
 Coincidentally this is roughly equivalent to Rust, so Rust devs should feel right at home.
 Even if not, you will quickly learn how pointer tags works by following the compiler errors.
 
-#### fntype
+#### closures
 
-function pointers are difficult to do nicely but also make them emit to C code well, so they don't really exist in ZZ.
-instead you declare a function to be a type instead of a concrete implementation.
-An fntype is emited as typedef, and therefore becomes a regular pointer type for both the C compiler and the ZZ memory tracker;
+function pointers are difficult to do nicely but also make them emit to all languages well, so they don't really exist in ZZ.
+instead you declare closures, which are automatically casted from and to functions
 
 ```C++
-fntype rand_t() -> int;
+closure rand_t() int;
 
-fn secure_random() -> int {
+fn secure_random() int {
     return 42;
 }
 
@@ -349,12 +349,6 @@ fn main() {
 }
 
 ```
-
-closures do not exist in ZZ. One reason being that the C output would be difficult to use in other raw C code.
-But the biggest reason is that most usage of closures is for capturing scope state.
-That only really works well with garbage collected languages, otherwise its difficult to reason about (see rust).
-In ZZ we instead explicitly track all state in structs and simply use plain stateless functions.
-
 
 #### metaprogramming or templates: tail variants
 
@@ -401,3 +395,200 @@ the tail is measured in number of elements of whatever is the last unsized eleme
 
 String can dynamically expand within the tail memory. in this case, we append some stuff to the string, without ever allocating any heap.
 simply returning from the current function will clear up any memory used, without the need for destructor ordering or signal safety.
+
+#### symbols
+
+Symbols are a big global enum that lets you create unique values from anywhere in your code.
+
+```C++
+    using symbols;
+
+    symbol Car;
+    symbol Bike;
+
+    fn drive_this(usize sym)
+        where symbol(sym)
+    {
+        if sym == Car {
+            printf("bzzzz\n");
+        } else {
+            printf("what do i do with a %s?\n", symbols::nameof(sym));
+        }
+    }
+```
+
+note that you cannot make assumptions about the integer value of a symbol,
+as it depends on compilation and loading order
+
+#### new constructors
+
+ZZ autogenerates bindings to more languages than C, and some languages are not fully compatible with C abi.
+Specifically they don't allow returning structs from functions, a standard way to create "constructor" functions in C.
+
+intstead you should be using a function that takes a mut pointer as its first argument, and call it on a zero initialized stack variable.
+zz has syntactic sugar for this with the 'new' keyword.
+
+```C++
+    struct A {
+        int a;
+        int b;
+    }
+
+    fn empty(A mut new * self, int a)
+    {
+        self->a = a;
+    }
+
+    fn main() {
+        new a = empty(3);
+        assert(a.a == 3)
+        assert(a.b == 0)
+    }
+```
+
+new creates a new local variable with the correct size and passes it as self argument to the constructor
+
+to create a local with a tail, use new like this:
+
+```C++
+    new+100 foo = string::empty();
+```
+
+#### procedural macros
+
+macros in zz are fully compiled and executed at compile time for each call.
+this allows constructing arbitrary complex macros using regular zz code.
+
+unlike C prepro macros, macros must emit complete expressions.
+for example you cannot emit an open brace without a closing brace.
+
+a macro is compiled to a standalone executable, automatically including all dependencies.
+the call arguments and derive context is passed as json to stdin,
+and the macro is expected to print zz code to stdout.
+
+```C++
+/! creates literal string with arg0 repeated arg1 times
+export macro repeat()  {
+
+    new+1000 a = ast::from_macro();
+    err::assert2(a.args[0].t == ast::Expression::LiteralString, "expected arg0: string");
+    err::assert2(a.args[1].t == ast::Expression::Literal,       "expected arg1: number");
+    let num = (int)atoi(a.args[1].v.string);
+
+    printf("\"");
+    for int mut i = 0; i < num; i++ {
+        printf("%s", a.args[0].v.string);
+    }
+    printf("\"");
+}
+
+export fn main() int {
+    printf("hello %s\n", repeat("world ", 32));
+    return 0;
+}
+```
+
+
+#### inline included C source
+
+ZZ supports importing C source with the `using` keyword. Imported C
+source can be inlined at the call site by using the `inline` keyword. In certain
+cases the imported C source may depend on symbols defined in a ZZ
+module. ZZ symbols can be given to an imported C file with the `needs`
+keyword.
+
+In the example below the `native.h` header file depends on the
+`example_Container` type to be defined. The `lib.zz` file imports the
+header file in line and exposes the `Container` type to the header file
+by specifying it with the `needs` keyword. The `Container` type is made
+available as `example_Container` because the project name is
+`example` and the type is `Container`.
+
+```c
+// native.h
+#include <stdio.h>
+void print(example_Container *self) {
+  printf("%s\n", (char *) self->value);
+}
+
+void init(example_Container *self, void const *value) {
+  self->value = value;
+}
+```
+
+```c++
+// lib.zz
+inline using (needs Container) "native.h" as native
+
+export struct Container {
+  void *value;
+}
+
+export fn create_container(Container new mut *self, void *value) {
+  native::init(self, value);
+}
+
+pub fn print(Container *self) {
+  native::print(self);
+}
+```
+
+```C++
+using example
+
+fn main() int {
+  new container = example::create_container("hello");
+  container.print();
+  return 0;
+}
+```
+
+#### packed structs and unions
+
+ZZ supports packed structs and unions with the `packed` modifier. This
+modifier, when used with `struct` or `union`, omits alignment padding.
+This is typically used for architecture independant serialization at the
+cost of causing alingment faults
+
+Below is an example of a packed and unpacked struct and their static
+sizes printed to stdout.
+
+```C++
+using <stdio.h>::{ printf }
+
+struct Packed packed {
+  u8 a;
+  u8 b;
+  int b;
+}
+
+struct Unpacked {
+  u8 a;
+  u8 b;
+  int b;
+}
+
+fn main() int {
+  printf("sizeof(Packed) == lu\n", sizeof(Packed)); // 6
+  printf("sizeof(Unpacked) == lu\n", sizeof(Unpacked)); // 8
+  return 0;
+}
+```
+
+#### environment variables
+
+##### `ZZ_MODULE_PATHS`
+
+When ZZ imports other ZZ modules it will look in a projects `modules/`
+directory by default. The search path can be extended by defining the
+`ZZ_MODULE_PATHS` environment variable much like
+[`PATH`](https://en.wikipedia.org/wiki/PATH_(variable)) environment
+variable where multiple paths can be defined separated by a colon (`:`)
+on POSIX systems and a semi-coloon (`;`) on Windows.
+
+```sh
+ZZ_MODULE_PATHS="$PWD/path/to/modules:/usr/share/zz/modules" zz build
+```
+
+
+[gcc-attributes]: https://gcc.gnu.org/onlinedocs/gcc-4.0.2/gcc/Type-Attributes.html

@@ -1,127 +1,180 @@
 using <string.h> as c_string;
 using slice::{Slice};
+using slice as roslice;
 
 export struct MutSlice {
-    Slice   slice;
-    usize   at;
+    u8 mut* mem;
+    usize   size;
+    usize   mut * at;
 }
 
+pub theory integrity(MutSlice mut*self) -> bool (
+        safe(self->at)
+    &&  safe(self->mem)
+    &&  len(self->mem) >= self->size
+    &&  *self->at <= self->size
+    &&  *self->at <= len(self->mem)
+)
 
-export fn borrow(MutSlice mut*self) -> MutSlice *
-    where self->slice.size >= len(self->slice.mem)
-    where self->at <= self->slice.size
-    model safe(return)
-    model return->slice.size == self->slice.size
-    model return->at == self->at
-    model return->slice.size >= len(return->slice.mem)
-    model return->at <= return->slice.size
-{
-    let r = self;
-    static_attest(r->slice.size == self->slice.size);
-    static_attest(r->at == self->at);
-    return r;
-}
-
-export fn new(u8 mut*mem, usize size) -> MutSlice
-    @solver = yices2
+/// create new mutable slice from its components
+export fn make(MutSlice new mut*self, u8 mut*mem, usize size, usize mut *at)
     where len(mem) >= size
-    model return.slice.size == size
-    model return.slice.size == len(return.slice.mem)
-    model return.at == 0
+    where safe(at)
+    where *at <= size
+    model integrity(self)
+    model len(mem) == len(self->mem)
+    model *at == *self->at
+    model at == self->at
 {
+    self->size = size;
+    self->mem  = mem;
+    self->at   = at;
+    static_attest(self->size == len(self->mem));
+}
 
-    let r = MutSlice {
-        slice: Slice {
-            size:   size,
-            mem:    mem,
-        },
-        at:     0,
+/// obtain the used memory as read only slice
+export fn as_slice(MutSlice * self) -> Slice
+    where   integrity(self)
+    model   roslice::integrity(&return)
+{
+    let r = Slice {
+        mem:    self->mem,
+        size:   *self->at,
     };
-    static_attest(r.slice.size == len(r.slice.mem));
+    static_attest(roslice::integrity(&r));
     return r;
 }
 
-
-export inline fn mem(MutSlice mut * self) -> u8 mut*
-    @solver = yices2
-    model len(return) >= self->slice.size
-    model len(return) >= self->at
+/// return remaining free bytes
+export fn space(MutSlice mut * self) -> usize
+    where   integrity(self)
 {
-    u8 mut* m = (u8 mut *)self->slice.mem;
-    static_attest(len(m) >= self->slice.size);
-    return m;
+    return self->size - *self->at;
 }
 
+/// append the contents of another slice
+export fn append_slice(MutSlice mut * self, Slice other) -> bool
+    where   integrity(self)
+    where   roslice::integrity(&other)
+    model   integrity(self)
+{
+    if other.size == 0 {
+        return true;
+    }
+    if *self->at >= self->size || other.size >  self->size || *self->at  > self->size - other.size {
+        return false;
+    }
+
+    c_string::memcpy(self->mem + *self->at, other.mem, other.size);
+    *self->at += other.size;
+    static_attest(*self->at < len(self->mem));
+    return true;
+}
+
+/// append raw bytes
 export fn append_bytes(MutSlice mut * self, u8 *b, usize l) -> bool
-    @solver = yices2
-    where len(b) >= l
-    model self->at <= self->slice.size
+    where   len(b) >= l
+    where   integrity(self)
+    model   integrity(self)
 {
-    if self->at >= self->slice.size || l >  self->slice.size || self->at  > self->slice.size - l {
+    if l == 0 {
+        return true;
+    }
+    if *self->at >= self->size || l >  self->size || *self->at  > self->size - l {
         return false;
     }
 
-    c_string::memcpy(self->mem() + self->at, b, l);
-    self->at += l;
+    c_string::memcpy(self->mem + *self->at, b, l);
+    *self->at += l;
+    static_attest(*self->at < len(self->mem));
     return true;
 }
 
+/// append a null terminated cstring, excluding its null terminator
+export fn append_cstr(MutSlice mut * self, char *b) -> bool
+    where   integrity(self)
+    where   nullterm(b)
+    model   integrity(self)
+{
+    if b == 0 {
+        return true;
+    }
+    let l = unsafe<usize>(c_string::strlen(b));
+    static_attest(len(b) >= l);
+    return append_bytes(self, (u8*)b, l);
+}
+
+/// push a single character
 export fn push(MutSlice mut * self, u8 b) -> bool
-    @solver = yices2
-    where self->slice.size >= 1
-    model self->at <= self->slice.size
+    where   integrity(self)
+    model   integrity(self)
 {
-    if self->at > self->slice.size - 1 {
+    if self->size < 1 || *self->at > self->size - 1 {
         return false;
     }
 
-    self->mem()[self->at] = b;
-    self->at += 1;
+    self->mem[*self->at] = b;
+    *self->at += 1;
 
     return true;
 }
 
+/// append a 16 bit integer as 2 bytes
 export fn push16(MutSlice mut * self, u16 b) -> bool
-    @solver = yices2
-    where self->slice.size >= 2
-    model self->at <= self->slice.size
+    where   integrity(self)
+    model   integrity(self)
 {
-    if self->at > self->slice.size - 2 {
+    if self->size < 2 || *self->at > self->size - 2 {
         return false;
     }
 
-    c_string::memcpy(self->mem() + self->at, &b, 2);
-    self->at += 2;
+    c_string::memcpy(self->mem + *self->at, &b, 2);
+    *self->at += 2;
 
     return true;
 }
 
+/// append a 32 bit integer as 4 bytes
 export fn push32(MutSlice mut * self, u32 b) -> bool
-    @solver = yices2
-    where self->slice.size >= 4
-    model self->at <= self->slice.size
+    where   integrity(self)
+    model   integrity(self)
 {
-    if self->at > self->slice.size - 4 {
+    if self->size < 4 || *self->at > self->size - 4 {
         return false;
     }
 
-    c_string::memcpy(self->mem() + self->at, &b, 4);
-    self->at += 4;
+    c_string::memcpy(self->mem + *self->at, &b, 4);
+    *self->at += 4;
 
     return true;
 }
 
+/// append a 64 bit integer as 8 bytes
 export fn push64(MutSlice mut * self, u64 b) -> bool
-    @solver = yices2
-    where self->slice.size > 8
+    where   integrity(self)
+    model   integrity(self)
 {
-    if self->at > self->slice.size - 8 {
+    if self->size < 8 || *self->at > self->size - 8 {
         return false;
     }
 
-    c_string::memcpy(self->mem() + self->at, &b, 8);
-    self->at += 8;
+    c_string::memcpy(self->mem + *self->at, &b, 8);
+    *self->at += 8;
 
     return true;
 }
 
+/// append any sized objects as raw bytes
+export fn append_obj(MutSlice mut * self, void+vt * b) -> bool
+    where   integrity(self)
+    model   integrity(self)
+{
+    if self->size < vt || *self->at >= self->size  || *self->at > self->size - vt {
+        return false;
+    }
+
+    c_string::memcpy(self->mem + *self->at, b, vt);
+    *self->at += vt;
+
+    return true;
+}
