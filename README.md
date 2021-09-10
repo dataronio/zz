@@ -12,13 +12,17 @@ at compile time.
 
 ### quick quick start
 
-Get the latest binary from http://bin.zetz.it
+1. Install https://github.com/Z3Prover/z3 usually through a distro package 
+2. Get the latest binary from http://bin.zetz.it
 
+## Discord Community
+
+https://discord.gg/EsMxjWtcf5
 
 ## editor support
 
 - Emacs: [zetz-mode](https://github.com/damon-kwok/zetz-mode)
-- Vim: [zz.vim](https://github.com/zetzit/zz/tree/master/zz.vim)
+- Vim: [zz.vim](https://github.com/zetzit/vim)
 
 
 ### how it looks

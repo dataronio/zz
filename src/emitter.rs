@@ -140,12 +140,12 @@ impl Emitter {
             ast::Type::U16 => "uint16_t".to_string(),
             ast::Type::U32 => "uint32_t".to_string(),
             ast::Type::U64 => "uint64_t".to_string(),
-            ast::Type::U128 => "uint128_t".to_string(),
+            ast::Type::U128 => "__uint128_t".to_string(),
             ast::Type::I8 => "int8_t".to_string(),
             ast::Type::I16 => "int16_t".to_string(),
             ast::Type::I32 => "int32_t".to_string(),
             ast::Type::I64 => "int64_t".to_string(),
-            ast::Type::I128 => "int128_t".to_string(),
+            ast::Type::I128 => "__int128_t".to_string(),
             ast::Type::Int => "int".to_string(),
             ast::Type::UInt => "unsigned int".to_string(),
             ast::Type::ISize => "intptr_t".to_string(),
@@ -1612,7 +1612,21 @@ impl Emitter {
             }
             ast::Expression::Literal { loc, v } => {
                 self.emit_loc(&loc);
-                write!(self.f, "    {}", v).unwrap();
+                match parser::parse_int(&v) {
+                    // Output as decimal if an integer to avoid warnings for binary literals
+                    // (binary literals are a GNU extension)
+                    Some(parser::Integer::Signed(int)) => {
+                        write!(self.f, "    {:#x}", int).unwrap();
+                    }
+                    Some(parser::Integer::Unsigned(int)) => {
+                        write!(self.f, "    {:#x}", int).unwrap();
+                    }
+                    // If the literal is not an integer (boolean literals, for example), write
+                    // it as-is
+                    None => {
+                        write!(self.f, "    {}", v).unwrap();
+                    }
+                }
             }
             ast::Expression::Call {
                 loc,
